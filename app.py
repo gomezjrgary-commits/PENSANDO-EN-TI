@@ -122,27 +122,60 @@ elif choice == "➕ Nuevo Préstamo":
             st.success(f"Registrado. Total a cobrar: ${total}")
 
 elif choice == "💰 Cobrar":
-    st.subheader("Registrar Abono")
+    st.subheader("💰 Registrar Abono / Refrendo")
     conn = sqlite3.connect('cobranza_v3.db')
-    df = pd.read_sql_query("SELECT id, cliente, saldo FROM prestamos WHERE saldo > 0", conn)
+    df = pd.read_sql_query("SELECT id, cliente, monto_original, saldo FROM prestamos WHERE saldo > 0", conn)
     
     if not df.empty:
-        opciones = {f"{r['cliente']} (Debe: ${r['saldo']})": r['id'] for i, r in df.iterrows()}
-        sel = st.selectbox("Cliente", list(opciones.keys()))
-        abono = st.number_input("Monto del pago", min_value=0.0)
-        multa = st.number_input("Multa ($20)", min_value=0.0, step=20.0)
+        opciones = {f"{r['cliente']} (Debe: ${r['saldo']:,.2f})": r['id'] for _, r in df.iterrows()}
+        sel_label = st.selectbox("Seleccionar Cliente", list(opciones.keys()))
+        p_id = opciones[sel_label]
         
-        if st.button("Confirmar Pago"):
-            p_id = opciones[sel]
+        # Obtener datos del préstamo seleccionado para el recibo
+        datos_p = df[df['id'] == p_id].iloc[0]
+        refrendo_sugerido = datos_p['monto_original'] * 0.15 # El 15% que definiste
+
+        st.info(f"💡 **Info de Refrendo:** El interés sugerido (15%) es de **${refrendo_sugerido:,.2f}**")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            abono = st.number_input("Monto del Abono (Capital)", min_value=0.0, step=50.0)
+        with col2:
+            multa = st.number_input("Interés / Refrendo ($)", min_value=0.0, value=refrendo_sugerido)
+        
+        total_pago = abono + multa
+
+        if st.button("Confirmar Pago y Generar Ticket"):
             c = conn.cursor()
+            # Restamos solo el abono al capital, la multa/refrendo es ganancia
             c.execute("UPDATE prestamos SET saldo = saldo - ? WHERE id = ?", (abono, p_id))
             c.execute("INSERT INTO pagos (prestamo_id, monto_pago, multa, fecha_pago) VALUES (?,?,?,?)",
                       (p_id, abono, multa, datetime.now().strftime("%Y-%m-%d %H:%M")))
             conn.commit()
+            
+            # --- GENERAR COMPROBANTE TEXTUAL ---
+            ticket = f"""
+            💎 PENSANDO EN TI 💎
+            ----------------------------
+            RECIBO DE PAGO
+            Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}
+            Cliente: {datos_p['cliente']}
+            ----------------------------
+            Abono Capital: ${abono:,.2f}
+            Refrendo/Int:  ${multa:,.2f}
+            TOTAL PAGADO:  ${total_pago:,.2f}
+            ----------------------------
+            NUEVO SALDO:   ${datos_p['saldo'] - abono:,.2f}
+            ----------------------------
+            ¡Gracias por su pago!
+            """
+            st.success("✅ Pago registrado")
+            st.text_area("Copia este comprobante para WhatsApp:", ticket, height=250)
+            st.download_button("Descargar Ticket", ticket, file_name=f"Ticket_{datos_p['cliente']}.txt")
             st.balloons()
-            st.success("Pago registrado correctamente.")
+    else:
+        st.info("No hay cuentas pendientes.")
     conn.close()
-
 elif choice == "📤 Retiros y Corte":
     st.subheader("Salidas de Dinero")
     monto_r = st.number_input("Monto a retirar de caja", min_value=0.0)
